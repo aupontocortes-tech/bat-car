@@ -9,7 +9,7 @@
     }
   ],
   "outputDirectory": "bat-app/build",
-  "routes": [
-    { "src": "/(.*)", "dest": "/index.html" }
+  "rewrites": [
+    { "source": "/(.*)", "destination": "/index.html" }
   ]
 }
