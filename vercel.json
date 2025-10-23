@@ -5,7 +5,7 @@
       "use": "@vercel/static-build",
       "config": {
         "buildCommand": "npm run build",
-        "distDir": "build"
+        "distDir": "bat-app/build"
       }
     }
   ],
