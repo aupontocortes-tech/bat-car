@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import Tesseract from 'tesseract.js';
 import { extractPlates, normalizeText } from '../../utils/plate';
 import { addPlateIfNew, getAllPlates, clearPlates, getCount } from '../storage/storage';
@@ -10,34 +10,11 @@ export default function CameraScreen({ onBack }: { onBack: () => void }) {
   const [message, setMessage] = useState<string | null>(null);
   const [count, setCount] = useState<number>(0);
 
-  useEffect(() => {
-    let stream: MediaStream;
-    async function startCamera() {
-      try {
-        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false });
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream;
-          await videoRef.current.play();
-        }
-      } catch (err) {
-        console.error('Erro ao acessar câmera', err);
-        setMessage('Permita o acesso à câmera para continuar');
-      }
-    }
-    startCamera();
-    refreshCount();
-    const id = setInterval(processFrame, 1800);
-    return () => {
-      clearInterval(id);
-      if (stream) stream.getTracks().forEach((t) => t.stop());
-    };
+  const refreshCount = useCallback(async () => {
+    setCount(await getCount());
   }, []);
 
-  async function refreshCount() {
-    setCount(await getCount());
-  }
-
-  async function processFrame() {
+  const processFrame = useCallback(async () => {
     if (!videoRef.current || !canvasRef.current) return;
     const video = videoRef.current;
     const canvas = canvasRef.current;
@@ -50,7 +27,6 @@ export default function CameraScreen({ onBack }: { onBack: () => void }) {
     canvas.width = w;
     canvas.height = h;
 
-    // Focus rectangle: center crop region for OCR
     const cropW = Math.floor(w * 0.8);
     const cropH = Math.floor(h * 0.22);
     const x = Math.floor((w - cropW) / 2);
@@ -83,7 +59,30 @@ export default function CameraScreen({ onBack }: { onBack: () => void }) {
     } catch (err) {
       console.warn('OCR falhou', err);
     }
-  }
+  }, [refreshCount]);
+
+  useEffect(() => {
+    let stream: MediaStream;
+    async function startCamera() {
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false });
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+          await videoRef.current.play();
+        }
+      } catch (err) {
+        console.error('Erro ao acessar câmera', err);
+        setMessage('Permita o acesso à câmera para continuar');
+      }
+    }
+    startCamera();
+    refreshCount();
+    const id = setInterval(processFrame, 1800);
+    return () => {
+      clearInterval(id);
+      if (stream) stream.getTracks().forEach((t) => t.stop());
+    };
+  }, [processFrame, refreshCount]);
 
   function extractPlate(text: string): string | null {
     const candidates = extractPlates(text);
