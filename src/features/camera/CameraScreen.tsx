@@ -28,8 +28,26 @@ export default function CameraScreen({ onBack }: { onBack: () => void }) {
 
   // rAF + intervalo adaptativo com throttle 400–600ms
   const lastOCRAtRef = useRef<number>(0);
-  const ocrIntervalMsRef = useRef<number>(380); // alvo de ~380ms
-  const avgOcrMsRef = useRef<number>(380); // média móvel do tempo de OCR
+  const ocrIntervalMsRef = useRef<number>(380);
+  const avgOcrMsRef = useRef<number>(380);
+  // Controles de câmera: track, lanterna, zoom
+  const videoTrackRef = useRef<MediaStreamTrack | null>(null);
+  const [torchSupported, setTorchSupported] = useState(false);
+  const [torchOn, setTorchOn] = useState(false);
+  const [zoomSupported, setZoomSupported] = useState(false);
+  const zoomRangeRef = useRef<{ min: number; max: number; step: number } | null>(null);
+  const [zoom, setZoom] = useState<number | null>(null);
+  // Multi-ROI controle
+  const roiBandRef = useRef<number>(1);
+  const lastSuccessAtRef = useRef<number>(Date.now());
+  // Toggle de exportação automática
+  const [autoExport, setAutoExport] = useState<boolean>(true);
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('autoExport');
+      if (saved !== null) setAutoExport(saved === 'true');
+    } catch {}
+  }, []);
 
   const refreshCount = useCallback(async () => {
     setCount(await getCount());
@@ -54,7 +72,14 @@ export default function CameraScreen({ onBack }: { onBack: () => void }) {
     const cropW = Math.floor(w * 0.8);
     const cropH = Math.floor(h * 0.22);
     const baseX = Math.floor((w - cropW) / 2);
-    const baseY = Math.floor((h - cropH) / 2);
+    // Alterna banda (topo/meio/base) se ficar >2s sem sucesso
+    if (Date.now() - lastSuccessAtRef.current > 2000) {
+      roiBandRef.current = (roiBandRef.current + 1) % 3;
+    }
+    const middleY = Math.floor((h - cropH) / 2);
+    const topY = Math.max(0, Math.floor(h * 0.18));
+    const bottomY = Math.min(h - cropH, Math.floor(h * 0.62));
+    const baseY = roiBandRef.current === 0 ? topY : roiBandRef.current === 2 ? bottomY : middleY;
 
     ctx.drawImage(video, 0, 0, w, h);
 
@@ -112,6 +137,8 @@ export default function CameraScreen({ onBack }: { onBack: () => void }) {
           // confirma em 1 frame com confiança e salva em paralelo
           lastPlateRef.current = maybePlate;
           lastSeenAtRef.current = now;
+          lastSuccessAtRef.current = now;
+          roiBandRef.current = 1; // volta para banda central
           (async () => {
             const added = await addPlateIfNew(maybePlate!);
             if (added) {
@@ -120,7 +147,7 @@ export default function CameraScreen({ onBack }: { onBack: () => void }) {
               showMessage('Nova placa registrada!');
               refreshCount();
               const records = await getAllPlates();
-              downloadExcel(records);
+              if (autoExport) downloadExcel(records);
             } else {
               showMessage('Placa já registrada');
             }
@@ -145,10 +172,32 @@ export default function CameraScreen({ onBack }: { onBack: () => void }) {
     let animId = 0;
     async function startCamera() {
       try {
-        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false });
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } },
+          audio: false,
+        });
         if (videoRef.current) {
           videoRef.current.srcObject = stream as any;
           await videoRef.current.play();
+        }
+        // Detecção de capacidades (torch/zoom)
+        const track = stream.getVideoTracks()[0];
+        videoTrackRef.current = track;
+        const caps: any = track.getCapabilities ? track.getCapabilities() : {};
+        if (caps && 'torch' in caps) setTorchSupported(!!caps.torch);
+        const zoomCap = caps?.zoom;
+        if (typeof zoomCap === 'object' && typeof zoomCap.min === 'number') {
+          setZoomSupported(true);
+          zoomRangeRef.current = { min: zoomCap.min ?? 1, max: zoomCap.max ?? 3, step: zoomCap.step ?? 0.1 };
+          const initial = zoomCap.min ?? 1;
+          setZoom(initial);
+          try { await track.applyConstraints({ advanced: [{ zoom: initial }] }); } catch {}
+        } else if (typeof zoomCap === 'number') {
+          setZoomSupported(true);
+          zoomRangeRef.current = { min: 1, max: zoomCap, step: 0.1 };
+          const initial = 1;
+          setZoom(initial);
+          try { await track.applyConstraints({ advanced: [{ zoom: initial }] }); } catch {}
         }
       } catch (err) {
         console.error('Erro ao acessar câmera', err);
@@ -270,6 +319,24 @@ export default function CameraScreen({ onBack }: { onBack: () => void }) {
     setTimeout(() => setMessage(null), 1000);
   }
 
+  async function setTorch(next: boolean) {
+    const track = videoTrackRef.current;
+    if (!track || !torchSupported) return;
+    try {
+      await track.applyConstraints({ advanced: [{ torch: next }] } as any);
+      setTorchOn(next);
+    } catch (e) { console.warn('Torch não disponível', e); }
+  }
+
+  async function setZoomValue(val: number) {
+    const track = videoTrackRef.current;
+    if (!track || !zoomSupported) return;
+    try {
+      await track.applyConstraints({ advanced: [{ zoom: val }] } as any);
+      setZoom(val);
+    } catch (e) { console.warn('Zoom não disponível', e); }
+  }
+
   return (
     <div className="relative w-full h-screen bg-black text-white">
       <video ref={videoRef} className="absolute inset-0 w-full h-full object-cover" playsInline muted />
@@ -302,6 +369,21 @@ export default function CameraScreen({ onBack }: { onBack: () => void }) {
         <button onClick={onExport} className="px-3 py-2 rounded bg-white/10 hover:bg-white/20">📄 Exportar Excel</button>
         <button onClick={onShare} className="px-3 py-2 rounded bg.white/10 hover:bg.white/20">📤 Compartilhar</button>
         <button onClick={onClear} className="px-3 py-2 rounded bg.white/10 hover:bg.white/20">🗑 Apagar Registros</button>
+        <label className="flex items-center gap-2 px-3 py-2 rounded bg.white/10">
+          <input type="checkbox" checked={autoExport} onChange={(e) => { const v = e.target.checked; setAutoExport(v); try { localStorage.setItem('autoExport', String(v)); } catch {} }} />
+          <span>Exportação automática</span>
+        </label>
+        {torchSupported && (
+          <button onClick={() => setTorch(!torchOn)} className="px-3 py-2 rounded bg.white/10 hover:bg.white/20" aria-pressed={torchOn}>
+            {torchOn ? '🔦 Lanterna ON' : '🔦 Lanterna OFF'}
+          </button>
+        )}
+        {zoomSupported && (
+          <div className="flex items-center gap-2 px-3 py-2 rounded bg.white/10">
+            <span>🔍 Zoom</span>
+            <input type="range" min={zoomRangeRef.current?.min ?? 1} max={zoomRangeRef.current?.max ?? 3} step={zoomRangeRef.current?.step ?? 0.1} value={zoom ?? (zoomRangeRef.current?.min ?? 1)} onChange={(e) => setZoomValue(parseFloat(e.target.value))} />
+          </div>
+        )}
       </div>
 
       {/* Toast message */}
