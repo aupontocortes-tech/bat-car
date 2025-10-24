@@ -1,4 +1,5 @@
 {
+  "outputDirectory": "build",
   "builds": [
     {
       "src": "package.json",
