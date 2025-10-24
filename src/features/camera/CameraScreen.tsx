@@ -19,8 +19,8 @@ export default function CameraScreen({ onBack }: { onBack: () => void }) {
   const lastSeenAtRef = useRef<number>(0);
   const lastDetectedRef = useRef<{ plate: string; confidence: number; ts: number } | null>(null);
   const cooldownMs = 4000; // evita repetição consecutiva em janelas curtas
-  const minConfidence = 65; // confiança mínima para considerar leitura válida
-  const confirmWindowMs = 3000; // janela para confirmar mesma placa em frames consecutivos
+  const minConfidence = 60; // confiança mínima para considerar leitura válida
+  const confirmWindowMs = 2000; // janela (reduzida) apenas para reforço, não obrigatório
 
   // Worker Tesseract reutilizável para maior performance
   const workerRef = useRef<any>(null);
@@ -28,8 +28,8 @@ export default function CameraScreen({ onBack }: { onBack: () => void }) {
 
   // rAF + intervalo adaptativo com throttle 400–600ms
   const lastOCRAtRef = useRef<number>(0);
-  const ocrIntervalMsRef = useRef<number>(500); // alvo de ~500ms
-  const avgOcrMsRef = useRef<number>(500); // média móvel do tempo de OCR
+  const ocrIntervalMsRef = useRef<number>(380); // alvo de ~380ms
+  const avgOcrMsRef = useRef<number>(380); // média móvel do tempo de OCR
 
   const refreshCount = useCallback(async () => {
     setCount(await getCount());
@@ -96,9 +96,9 @@ export default function CameraScreen({ onBack }: { onBack: () => void }) {
         }
       }
       const dt = performance.now() - t0;
-      // atualiza média móvel e ajusta intervalo alvo (clamp 400–600ms)
+      // atualiza média móvel e ajusta intervalo alvo (clamp 300–450ms)
       avgOcrMsRef.current = 0.8 * avgOcrMsRef.current + 0.2 * dt;
-      ocrIntervalMsRef.current = Math.max(400, Math.min(600, avgOcrMsRef.current));
+      ocrIntervalMsRef.current = Math.max(300, Math.min(450, avgOcrMsRef.current));
 
       if (maybePlate) {
         const now = Date.now();
@@ -108,8 +108,8 @@ export default function CameraScreen({ onBack }: { onBack: () => void }) {
 
         if (lastPlateRef.current === maybePlate && now - lastSeenAtRef.current < cooldownMs) {
           showMessage('Placa já registrada');
-        } else if (consecutiveTwo) {
-          // confirma e salva em paralelo, sem bloquear UI
+        } else if (currentValid) {
+          // confirma em 1 frame com confiança e salva em paralelo
           lastPlateRef.current = maybePlate;
           lastSeenAtRef.current = now;
           (async () => {
@@ -125,9 +125,9 @@ export default function CameraScreen({ onBack }: { onBack: () => void }) {
               showMessage('Placa já registrada');
             }
           })();
-          lastDetectedRef.current = null; // zera para a próxima sequência
+          lastDetectedRef.current = null;
         } else {
-          // registra detecção atual para validar no próximo frame
+          // guarda leitura atual para possível reforço no próximo frame
           lastDetectedRef.current = { plate: maybePlate, confidence: gotConfidence, ts: now };
         }
       } else {
