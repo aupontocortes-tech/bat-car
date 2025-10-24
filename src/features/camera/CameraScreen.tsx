@@ -28,6 +28,11 @@ export default function CameraScreen({ onBack }: { onBack: () => void }) {
   const recentDetectionsRef = useRef<Array<{ plate: string; confidence: number; ts: number }>>([]);
   const confirmWindowMs = 3000; // janela para confirmar mesma placa
   const minRepeats = 2; // mínimo de aparições para confirmar
+
+  // rAF + intervalo adaptativo para maior fluidez
+  const lastOCRAtRef = useRef<number>(0);
+  const ocrIntervalMsRef = useRef<number>(300); // alvo de ~300ms
+  const avgOcrMsRef = useRef<number>(350); // média móvel do tempo de OCR
   const refreshCount = useCallback(async () => {
     setCount(await getCount());
   }, []);
@@ -55,12 +60,35 @@ export default function CameraScreen({ onBack }: { onBack: () => void }) {
 
     ctx.drawImage(video, 0, 0, w, h);
 
-    // Tenta múltiplos ROIs (centro, um pouco acima, um pouco abaixo) para maior robustez
-    const rois = [
-      { x: baseX, y: baseY },
-      { x: baseX, y: Math.max(0, baseY - offsetY) },
-      { x: baseX, y: Math.min(h - cropH, baseY + offsetY) },
-    ];
+-    // Tenta múltiplos ROIs (centro, um pouco acima, um pouco abaixo) para maior robustez
+-    const rois = [
+-      { x: baseX, y: baseY },
+-      { x: baseX, y: Math.max(0, baseY - offsetY) },
+-      { x: baseX, y: Math.min(h - cropH, baseY + offsetY) },
+-    ];
+-   const slow = avgOcrMsRef.current > 500; // se estiver lento, reduza custo
+-   const rois = slow
+-   ? [
+-   { x: baseX, y: baseY },
+-   { x: baseX, y: Math.max(0, baseY - offsetY) },
+-   ]
+-   : [
+-   { x: baseX, y: baseY },
+-   { x: baseX, y: Math.max(0, baseY - offsetY) },
+-   { x: baseX, y: Math.min(h - cropH, baseY + offsetY) },
+-   ];
++    // ROIs dinâmicos: reduza custo quando estiver lento
++    const slow = avgOcrMsRef.current > 500; // se estiver lento, reduza custo
++    const rois = slow
++      ? [
++          { x: baseX, y: baseY },
++          { x: baseX, y: Math.max(0, baseY - offsetY) },
++        ]
++      : [
++          { x: baseX, y: baseY },
++          { x: baseX, y: Math.max(0, baseY - offsetY) },
++          { x: baseX, y: Math.min(h - cropH, baseY + offsetY) },
++        ];
 
     try {
       let maybePlate: string | null = null;
@@ -69,36 +97,55 @@ export default function CameraScreen({ onBack }: { onBack: () => void }) {
       for (const roi of rois) {
         // Recorta ROI com escala para aumentar DPI de OCR
         const scale = 1.5;
-        const off = document.createElement('canvas');
-        off.width = Math.floor(cropW * scale);
-        off.height = Math.floor(cropH * scale);
-        const octx = off.getContext('2d');
-        if (!octx) continue;
-        octx.imageSmoothingEnabled = true;
-        octx.drawImage(canvas, roi.x, roi.y, cropW, cropH, 0, 0, off.width, off.height);
-
-        const proc = preprocessCanvas(off);
-
-        let data: any;
-        if (workerReadyRef.current && workerRef.current) {
-          const result = await workerRef.current.recognize(proc);
-          data = result.data;
-        } else {
-          const result = await Tesseract.recognize(proc, 'eng', {
-            tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789',
-            psm: 7,
-          } as any);
-          data = result.data;
-        }
-
-        const raw = normalizeText(data.text || '');
-        const candidate = extractPlate(raw);
-        const conf = (data.confidence as number) || 0;
-        if (candidate) {
-          maybePlate = candidate;
-          gotConfidence = conf;
-          break;
-        }
+       const scale = slow ? 1.3 : 1.5; // ajuste dinâmico de escala
+       const t0 = performance.now();
+       for (const roi of rois) {
+       // Recorta ROI com escala para aumentar DPI de OCR
++       const scale = slow ? 1.3 : 1.5; // ajuste dinâmico de escala
++       const t0 = performance.now();
++       for (const roi of rois) {
++         // Recorta ROI com escala para aumentar DPI de OCR
+           const off = document.createElement('canvas');
+           off.width = Math.floor(cropW * scale);
+           off.height = Math.floor(cropH * scale);
+           const octx = off.getContext('2d');
+           if (!octx) continue;
+           octx.imageSmoothingEnabled = true;
+           octx.drawImage(canvas, roi.x, roi.y, cropW, cropH, 0, 0, off.width, off.height);
+ 
+           const proc = preprocessCanvas(off);
+ 
+           let data: any;
+           if (workerReadyRef.current && workerRef.current) {
+             const result = await workerRef.current.recognize(proc);
+             data = result.data;
+           } else {
+             const result = await Tesseract.recognize(proc, 'eng', {
+               tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789',
+               psm: 7,
+             } as any);
+             data = result.data;
+           }
+ 
+           const raw = normalizeText(data.text || '');
+           const candidate = extractPlate(raw);
+           const conf = (data.confidence as number) || 0;
+           if (candidate) {
+             maybePlate = candidate;
+             gotConfidence = conf;
+             break;
+           }
+-        }
+-       const dt = performance.now() - t0;
+-       // atualiza média móvel e ajusta intervalo alvo
+-       avgOcrMsRef.current = 0.7 * avgOcrMsRef.current + 0.3 * dt;
+-       ocrIntervalMsRef.current = Math.max(200, Math.min(600, avgOcrMsRef.current * 0.8));
+-      }
++       }
++       const dt = performance.now() - t0;
++       // atualiza média móvel e ajusta intervalo alvo
++       avgOcrMsRef.current = 0.7 * avgOcrMsRef.current + 0.3 * dt;
++       ocrIntervalMsRef.current = Math.max(200, Math.min(600, avgOcrMsRef.current * 0.8));
       }
 
       if (maybePlate) {
@@ -171,9 +218,19 @@ export default function CameraScreen({ onBack }: { onBack: () => void }) {
     startCamera();
     initWorker();
     refreshCount();
-    const id = setInterval(processFrame, 1000); // mais frequente para resposta rápida
+    // Loop com requestAnimationFrame, aplicando intervalo adaptativo
+    const tick = async () => {
+    const now = performance.now();
+    if (!processingRef.current && now - lastOCRAtRef.current >= ocrIntervalMsRef.current) {
+    await processFrame();
+    lastOCRAtRef.current = now;
+    }
+    animId = requestAnimationFrame(tick);
+    };
+    animId = requestAnimationFrame(tick);
     return () => {
-      clearInterval(id);
+    clearInterval(id);
+    cancelAnimationFrame(animId);
       if (stream) stream.getTracks().forEach((t) => t.stop());
       const w = workerRef.current;
       if (w && w.terminate) {
