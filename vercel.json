@@ -1,16 +1,8 @@
 {
   "builds": [
     {
-      "src": "bat-app/package.json",
-      "use": "@vercel/static-build",
-      "config": {
-        "buildCommand": "npm run build",
-        "outputDirectory": "bat-app/build"
-      }
+      "src": "next-app/package.json",
+      "use": "@vercel/next"
     }
-  ],
-  "rewrites": [
-    { "source": "/(.*)", "destination": "/index.html" }
-  ],
-  "cleanUrls": true
+  ]
 }
