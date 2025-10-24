@@ -19,6 +19,8 @@ export default function CameraScreen({ onBack }: { onBack: () => void }) {
   const lastSeenAtRef = useRef<number>(0);
   const cooldownMs = 5000; // evita repetição consecutiva em janelas curtas
   const minConfidence = 70; // confiança mínima para registrar
++  const cooldownMs = 4000; // janela menor para evitar bloqueio excessivo
++  const minConfidence = 65; // mais permissivo para fluidez
 
   // Worker Tesseract reutilizável para maior performance
   const workerRef = useRef<any>(null);
@@ -28,6 +30,10 @@ export default function CameraScreen({ onBack }: { onBack: () => void }) {
   const recentDetectionsRef = useRef<Array<{ plate: string; confidence: number; ts: number }>>([]);
   const confirmWindowMs = 3000; // janela para confirmar mesma placa
   const minRepeats = 2; // mínimo de aparições para confirmar
++  const recentDetectionsRef = useRef<Array<{ plate: string; confidence: number; ts: number }>>([]);
++  const confirmWindowMs = 2500; // janela mais curta para confirmação
++  const minRepeats = 1; // confirmar com uma leitura válida
++  const roiIndexRef = useRef<number>(0); // alterna ROI a cada frame
 
   // rAF + intervalo adaptativo para maior fluidez
   const lastOCRAtRef = useRef<number>(0);
@@ -91,36 +97,52 @@ export default function CameraScreen({ onBack }: { onBack: () => void }) {
         if (!octx) continue;
         octx.imageSmoothingEnabled = true;
         octx.drawImage(canvas, roi.x, roi.y, cropW, cropH, 0, 0, off.width, off.height);
- 
-           const proc = preprocessCanvas(off);
- 
-           let data: any;
-           if (workerReadyRef.current && workerRef.current) {
-             const result = await workerRef.current.recognize(proc);
-             data = result.data;
-           } else {
-             const result = await Tesseract.recognize(proc, 'eng', {
-               tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789',
-               psm: 7,
-             } as any);
-             data = result.data;
-           }
- 
-           const raw = normalizeText(data.text || '');
-           const candidate = extractPlate(raw);
--          const conf = (data.confidence as number) || 0;
-+          const conf = typeof (data as any).confidence === 'number' ? (data as any).confidence : 80;
-           if (candidate) {
-             maybePlate = candidate;
-             gotConfidence = conf;
-             break;
-           }
-
-        }
-        const dt = performance.now() - t0;
-        // atualiza média móvel e ajusta intervalo alvo
-        avgOcrMsRef.current = 0.7 * avgOcrMsRef.current + 0.3 * dt;
-        ocrIntervalMsRef.current = Math.max(150, Math.min(500, avgOcrMsRef.current * 0.7));
++       const t0 = performance.now();
++       // Processa apenas um ROI por frame e alterna entre eles para reduzir custo
++       const idx = roiIndexRef.current % rois.length;
++       roiIndexRef.current++;
++       const roi = rois[idx];
++       const scale = verySlow ? 1.1 : slow ? 1.3 : 1.6; // escala mais alta quando rápido
++       const off = document.createElement('canvas');
++       off.width = Math.floor(cropW * scale);
++       off.height = Math.floor(cropH * scale);
++       const octx = off.getContext('2d');
++       if (octx) {
++         octx.imageSmoothingEnabled = true;
++         octx.drawImage(canvas, roi.x, roi.y, cropW, cropH, 0, 0, off.width, off.height);
+          
+            const proc = preprocessCanvas(off);
+          
+            let data: any;
+            if (workerReadyRef.current && workerRef.current) {
+              const result = await workerRef.current.recognize(proc);
+              data = result.data;
+            } else {
+              const result = await Tesseract.recognize(proc, 'eng', {
+                tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789',
+                psm: 7,
+              } as any);
+              data = result.data;
+            }
+          
+            const raw = normalizeText(data.text || '');
+            const candidate = extractPlate(raw);
+-           const conf = typeof (data as any).confidence === 'number' ? (data as any).confidence : 80;
++           const conf = typeof (data as any).confidence === 'number' ? (data as any).confidence : 80;
+            if (candidate) {
+              maybePlate = candidate;
+              gotConfidence = conf;
+-             break;
+            }
+- 
+-         }
++       }
+          const dt = performance.now() - t0;
+          // atualiza média móvel e ajusta intervalo alvo
+-         avgOcrMsRef.current = 0.7 * avgOcrMsRef.current + 0.3 * dt;
+-         ocrIntervalMsRef.current = Math.max(150, Math.min(500, avgOcrMsRef.current * 0.7));
++         avgOcrMsRef.current = 0.6 * avgOcrMsRef.current + 0.4 * dt;
++         ocrIntervalMsRef.current = Math.max(100, Math.min(450, avgOcrMsRef.current * 0.6));
 
       if (maybePlate) {
         const now = Date.now();
