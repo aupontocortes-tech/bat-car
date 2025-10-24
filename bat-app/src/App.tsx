@@ -1,13 +1,21 @@
-import { useState } from 'react';
-import HomeScreen from './features/home/HomeScreen';
-import CameraScreen from './features/camera/CameraScreen';
-
 function App() {
-  const [mode, setMode] = useState<'home' | 'camera'>('home');
-  return mode === 'home' ? (
-    <HomeScreen onStart={() => setMode('camera')} />
-  ) : (
-    <CameraScreen onBack={() => setMode('home')} />
+  return (
+    <div
+      style={{
+        minHeight: "100vh",
+        display: "flex",
+        flexDirection: "column",
+        justifyContent: "center",
+        alignItems: "center",
+        backgroundColor: "#f0f0f0",
+        fontFamily: "Arial, sans-serif",
+      }}
+    >
+      <h1 style={{ fontSize: "2rem", color: "#333" }}>🚀 Aplicativo funcionando!</h1>
+      <p style={{ marginTop: "10px", color: "#555" }}>
+        Seu app React foi carregado com sucesso no Vercel.
+      </p>
+    </div>
   );
 }
 
