@@ -13,59 +13,102 @@ export default function CameraScreen({ onBack }: { onBack: () => void }) {
   const [showSaved, setShowSaved] = useState(false);
   const [savedRecords, setSavedRecords] = useState<PlateRecord[]>([]);
 
+  // Controle de processamento e dedupe temporal
+  const processingRef = useRef(false);
+  const lastPlateRef = useRef<string | null>(null);
+  const lastSeenAtRef = useRef<number>(0);
+  const cooldownMs = 5000; // evita repetição consecutiva em janelas curtas
+  const minConfidence = 60; // confiança mínima para registrar
+
   const refreshCount = useCallback(async () => {
     setCount(await getCount());
   }, []);
 
   const processFrame = useCallback(async () => {
+    if (processingRef.current) return;
     if (!videoRef.current || !canvasRef.current) return;
+    processingRef.current = true;
     const video = videoRef.current;
     const canvas = canvasRef.current;
     const ctx = canvas.getContext('2d');
-    if (!ctx) return;
+    if (!ctx) { processingRef.current = false; return; }
 
     const w = video.videoWidth;
     const h = video.videoHeight;
-    if (!w || !h) return;
+    if (!w || !h) { processingRef.current = false; return; }
     canvas.width = w;
     canvas.height = h;
 
     const cropW = Math.floor(w * 0.8);
     const cropH = Math.floor(h * 0.22);
-    const x = Math.floor((w - cropW) / 2);
-    const y = Math.floor((h - cropH) / 2);
+    const baseX = Math.floor((w - cropW) / 2);
+    const baseY = Math.floor((h - cropH) / 2);
+    const offsetY = Math.floor(h * 0.06);
 
     ctx.drawImage(video, 0, 0, w, h);
-    const imageData = ctx.getImageData(x, y, cropW, cropH);
-    const off = document.createElement('canvas');
-    off.width = cropW;
-    off.height = cropH;
-    const octx = off.getContext('2d');
-    if (!octx) return;
-    octx.putImageData(imageData, 0, 0);
+
+    // Tenta múltiplos ROIs (centro, um pouco acima, um pouco abaixo) para maior robustez
+    const rois = [
+      { x: baseX, y: baseY },
+      { x: baseX, y: Math.max(0, baseY - offsetY) },
+      { x: baseX, y: Math.min(h - cropH, baseY + offsetY) },
+    ];
 
     try {
-      const { data } = await Tesseract.recognize(off, 'eng', {
-        tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789',
-      } as any);
-      const raw = normalizeText(data.text || '');
-      const maybePlate = extractPlate(raw);
+      let maybePlate: string | null = null;
+      let gotConfidence = 0;
+
+      for (const roi of rois) {
+        const imageData = ctx.getImageData(roi.x, roi.y, cropW, cropH);
+        const off = document.createElement('canvas');
+        off.width = cropW;
+        off.height = cropH;
+        const octx = off.getContext('2d');
+        if (!octx) continue;
+        octx.putImageData(imageData, 0, 0);
+
+        const { data } = await Tesseract.recognize(off, 'eng', {
+          tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789',
+          psm: 7, // linha única
+        } as any);
+        const raw = normalizeText(data.text || '');
+        const candidate = extractPlate(raw);
+        const conf = (data.confidence as number) || 0;
+        if (candidate) {
+          maybePlate = candidate;
+          gotConfidence = conf;
+          break;
+        }
+      }
+
       if (maybePlate) {
-        const added = await addPlateIfNew(maybePlate);
-        if (added) {
-          triggerBeep();
-          triggerVibrate();
-          showMessage('Nova placa registrada!');
-          refreshCount();
-          const records = await getAllPlates();
-          downloadExcel(records);
-        } else {
-          // Placa já existente: não salva novamente
+        const now = Date.now();
+        if (lastPlateRef.current === maybePlate && now - lastSeenAtRef.current < cooldownMs) {
           showMessage('Placa já registrada');
+        } else {
+          lastPlateRef.current = maybePlate;
+          lastSeenAtRef.current = now;
+          if (gotConfidence >= minConfidence) {
+            const added = await addPlateIfNew(maybePlate);
+            if (added) {
+              triggerBeep();
+              triggerVibrate();
+              showMessage('Nova placa registrada!');
+              refreshCount();
+              const records = await getAllPlates();
+              downloadExcel(records);
+            } else {
+              showMessage('Placa já registrada');
+            }
+          } else {
+            // confiança baixa: ignora para evitar falsos positivos
+          }
         }
       }
     } catch (err) {
       console.warn('OCR falhou', err);
+    } finally {
+      processingRef.current = false;
     }
   }, [refreshCount]);
 
@@ -85,7 +128,7 @@ export default function CameraScreen({ onBack }: { onBack: () => void }) {
     }
     startCamera();
     refreshCount();
-    const id = setInterval(processFrame, 1800);
+    const id = setInterval(processFrame, 1000); // mais frequente para resposta rápida
     return () => {
       clearInterval(id);
       if (stream) stream.getTracks().forEach((t) => t.stop());
