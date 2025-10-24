@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useRef, useState, useCallback } from 'react';
 import Tesseract from 'tesseract.js';
-import { extractPlates, normalizeText } from '../../utils/plate';
+import { extractPlates, normalizeText, type PlateRecord } from '../../utils/plate';
 import { addPlateIfNew, getAllPlates, clearPlates, getCount } from '../storage/storage';
 import { downloadExcel, makeExcelBlob } from '../export/excel';
 
@@ -10,6 +10,8 @@ export default function CameraScreen({ onBack }: { onBack: () => void }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [count, setCount] = useState<number>(0);
+  const [showSaved, setShowSaved] = useState(false);
+  const [savedRecords, setSavedRecords] = useState<PlateRecord[]>([]);
 
   const refreshCount = useCallback(async () => {
     setCount(await getCount());
@@ -53,11 +55,13 @@ export default function CameraScreen({ onBack }: { onBack: () => void }) {
         if (added) {
           triggerBeep();
           triggerVibrate();
-          showCheck();
+          showMessage('Nova placa registrada!');
           refreshCount();
-          // Auto-exportar Excel imediatamente após registrar nova placa
           const records = await getAllPlates();
           downloadExcel(records);
+        } else {
+          // Placa já existente: não salva novamente
+          showMessage('Placa já registrada');
         }
       }
     } catch (err) {
@@ -109,7 +113,6 @@ export default function CameraScreen({ onBack }: { onBack: () => void }) {
         console.warn('Compartilhamento cancelado', e);
       }
     } else {
-      // Fallback: download
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
@@ -122,6 +125,13 @@ export default function CameraScreen({ onBack }: { onBack: () => void }) {
   async function onClear() {
     await clearPlates();
     refreshCount();
+    setSavedRecords([]);
+  }
+
+  async function openSavedList() {
+    const list = await getAllPlates();
+    setSavedRecords(list);
+    setShowSaved(true);
   }
 
   function triggerBeep() {
@@ -145,8 +155,8 @@ export default function CameraScreen({ onBack }: { onBack: () => void }) {
     if (navigator.vibrate) navigator.vibrate(80);
   }
 
-  function showCheck() {
-    setMessage('Nova placa registrada!');
+  function showMessage(text: string) {
+    setMessage(text);
     setTimeout(() => setMessage(null), 1000);
   }
 
@@ -160,7 +170,14 @@ export default function CameraScreen({ onBack }: { onBack: () => void }) {
         <button onClick={onBack} className="px-3 py-2 rounded bg-black/40 hover:bg.black/60">← Voltar</button>
         <div className="text-right">
           <div className="text-xs opacity-90">Aponte para a placa do veículo</div>
-          <div className="mt-1 text-sm font-semibold">Placas salvas: {count}</div>
+          <button
+            onClick={openSavedList}
+            className="mt-1 text-sm font-semibold underline underline-offset-2 hover:opacity-95"
+            aria-label="Placas salvas"
+            title="Placas salvas"
+          >
+            Placas salvas: {count}
+          </button>
         </div>
         <button className="px-3 py-2 rounded bg-black/40 hover:bg.black/60">⚙️ Configurações</button>
       </div>
@@ -177,10 +194,50 @@ export default function CameraScreen({ onBack }: { onBack: () => void }) {
         <button onClick={onClear} className="px-3 py-2 rounded bg.white/10 hover:bg.white/20">🗑 Apagar Registros</button>
       </div>
 
-      {/* Check message */}
+      {/* Toast message */}
       {message && (
         <div className="absolute top-10 left-1/2 -translate-x-1/2 bg-green-600 text-white px-4 py-2 rounded shadow animate-pulse">
           ✅ {message}
+        </div>
+      )}
+
+      {/* Saved plates modal */}
+      {showSaved && (
+        <div className="absolute inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-md bg-white text-black rounded-lg shadow-xl overflow-hidden">
+            <div className="px-4 py-3 flex items-center justify-between border-b">
+              <div className="font-semibold">Placas Salvas ({savedRecords.length})</div>
+              <button
+                onClick={() => setShowSaved(false)}
+                className="px-2 py-1 rounded bg-black/10 hover:bg-black/20"
+                aria-label="Fechar"
+              >
+                ✖
+              </button>
+            </div>
+            <div className="max-h-[50vh] overflow-y-auto">
+              {savedRecords.length === 0 ? (
+                <div className="px-4 py-6 text-center text-sm text-black/60">Nenhum registro ainda</div>
+              ) : (
+                <ul>
+                  {savedRecords.map((r) => (
+                    <li key={r.plate} className="px-4 py-3 border-b text-sm flex items-center justify-between">
+                      <span className="font-mono font-semibold">{r.plate}</span>
+                      <span className="text-black/60">{new Date(r.timestamp).toLocaleString()}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+            <div className="px-4 py-3 flex items-center justify-end gap-2 border-t bg-black/5">
+              <button
+                onClick={() => setShowSaved(false)}
+                className="px-3 py-2 rounded bg-[#0D47A1] text-white hover:opacity-95"
+              >
+                Fechar
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>
