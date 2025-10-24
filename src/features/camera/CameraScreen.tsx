@@ -20,6 +20,9 @@ export default function CameraScreen({ onBack }: { onBack: () => void }) {
   const cooldownMs = 5000; // evita repetição consecutiva em janelas curtas
   const minConfidence = 60; // confiança mínima para registrar
 
+  // Worker Tesseract reutilizável para maior performance
+  const workerRef = useRef<any>(null);
+  const workerReadyRef = useRef<boolean>(false);
   const refreshCount = useCallback(async () => {
     setCount(await getCount());
   }, []);
@@ -59,18 +62,30 @@ export default function CameraScreen({ onBack }: { onBack: () => void }) {
       let gotConfidence = 0;
 
       for (const roi of rois) {
-        const imageData = ctx.getImageData(roi.x, roi.y, cropW, cropH);
+        // Recorta ROI com escala para aumentar DPI de OCR
+        const scale = 1.5;
         const off = document.createElement('canvas');
-        off.width = cropW;
-        off.height = cropH;
+        off.width = Math.floor(cropW * scale);
+        off.height = Math.floor(cropH * scale);
         const octx = off.getContext('2d');
         if (!octx) continue;
-        octx.putImageData(imageData, 0, 0);
+        octx.imageSmoothingEnabled = true;
+        octx.drawImage(canvas, roi.x, roi.y, cropW, cropH, 0, 0, off.width, off.height);
 
-        const { data } = await Tesseract.recognize(off, 'eng', {
-          tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789',
-          psm: 7, // linha única
-        } as any);
+        const proc = preprocessCanvas(off);
+
+        let data: any;
+        if (workerReadyRef.current && workerRef.current) {
+          const result = await workerRef.current.recognize(proc);
+          data = result.data;
+        } else {
+          const result = await Tesseract.recognize(proc, 'eng', {
+            tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789',
+            psm: 7,
+          } as any);
+          data = result.data;
+        }
+
         const raw = normalizeText(data.text || '');
         const candidate = extractPlate(raw);
         const conf = (data.confidence as number) || 0;
@@ -126,12 +141,37 @@ export default function CameraScreen({ onBack }: { onBack: () => void }) {
         setMessage('Permita o acesso à câmera para continuar');
       }
     }
+    async function initWorker() {
+      try {
+        const worker = await (Tesseract as any).createWorker({ logger: null });
+        await worker.loadLanguage('eng');
+        await worker.initialize('eng');
+        await worker.setParameters({
+          tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789',
+          preserve_interword_spaces: '1',
+          user_defined_dpi: '300',
+          psm: '7',
+        });
+        workerRef.current = worker;
+        workerReadyRef.current = true;
+      } catch (e) {
+        console.warn('Falha ao iniciar worker Tesseract', e);
+        workerReadyRef.current = false;
+      }
+    }
     startCamera();
+    initWorker();
     refreshCount();
     const id = setInterval(processFrame, 1000); // mais frequente para resposta rápida
     return () => {
       clearInterval(id);
       if (stream) stream.getTracks().forEach((t) => t.stop());
+      const w = workerRef.current;
+      if (w && w.terminate) {
+        try { w.terminate(); } catch {}
+        workerRef.current = null;
+        workerReadyRef.current = false;
+      }
     };
   }, [processFrame, refreshCount]);
 
@@ -286,3 +326,34 @@ export default function CameraScreen({ onBack }: { onBack: () => void }) {
     </div>
   );
 }
+
+
+function preprocessCanvas(src: HTMLCanvasElement): HTMLCanvasElement {
+    const w = src.width;
+    const h = src.height;
+    const out = document.createElement('canvas');
+    out.width = w;
+    out.height = h;
+    const ctx = out.getContext('2d');
+    if (!ctx) return src;
+    ctx.drawImage(src, 0, 0);
+    const imageData = ctx.getImageData(0, 0, w, h);
+    const d = imageData.data;
+    // Grayscale + threshold adaptativo simples (baseado na média)
+    let sum = 0;
+    for (let i = 0; i < d.length; i += 4) {
+      const r = d[i], g = d[i + 1], b = d[i + 2];
+      const gray = 0.299 * r + 0.587 * g + 0.114 * b;
+      d[i] = d[i + 1] = d[i + 2] = gray;
+      sum += gray;
+    }
+    const mean = sum / (w * h);
+    const threshold = Math.max(100, Math.min(200, mean * 0.95));
+    for (let i = 0; i < d.length; i += 4) {
+      const val = d[i] > threshold ? 255 : 0;
+      d[i] = d[i + 1] = d[i + 2] = val;
+      d[i + 3] = 255;
+    }
+    ctx.putImageData(imageData, 0, 0);
+    return out;
+  }
