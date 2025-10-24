@@ -18,7 +18,7 @@ export default function CameraScreen({ onBack }: { onBack: () => void }) {
   const lastPlateRef = useRef<string | null>(null);
   const lastSeenAtRef = useRef<number>(0);
   const cooldownMs = 5000; // evita repetição consecutiva em janelas curtas
-  const minConfidence = 60; // confiança mínima para registrar
+  const minConfidence = 70; // confiança mínima para registrar
 
   // Worker Tesseract reutilizável para maior performance
   const workerRef = useRef<any>(null);
@@ -60,58 +60,37 @@ export default function CameraScreen({ onBack }: { onBack: () => void }) {
 
     ctx.drawImage(video, 0, 0, w, h);
 
--    // Tenta múltiplos ROIs (centro, um pouco acima, um pouco abaixo) para maior robustez
--    const rois = [
--      { x: baseX, y: baseY },
--      { x: baseX, y: Math.max(0, baseY - offsetY) },
--      { x: baseX, y: Math.min(h - cropH, baseY + offsetY) },
--    ];
--   const slow = avgOcrMsRef.current > 500; // se estiver lento, reduza custo
--   const rois = slow
--   ? [
--   { x: baseX, y: baseY },
--   { x: baseX, y: Math.max(0, baseY - offsetY) },
--   ]
--   : [
--   { x: baseX, y: baseY },
--   { x: baseX, y: Math.max(0, baseY - offsetY) },
--   { x: baseX, y: Math.min(h - cropH, baseY + offsetY) },
--   ];
-+    // ROIs dinâmicos: reduza custo quando estiver lento
-+    const slow = avgOcrMsRef.current > 500; // se estiver lento, reduza custo
-+    const rois = slow
-+      ? [
-+          { x: baseX, y: baseY },
-+          { x: baseX, y: Math.max(0, baseY - offsetY) },
-+        ]
-+      : [
-+          { x: baseX, y: baseY },
-+          { x: baseX, y: Math.max(0, baseY - offsetY) },
-+          { x: baseX, y: Math.min(h - cropH, baseY + offsetY) },
-+        ];
+
+    // ROIs dinâmicos: reduza custo quando estiver lento
+    const slow = avgOcrMsRef.current > 400; // reduza custo mais cedo
+    const verySlow = avgOcrMsRef.current > 800; // custo mínimo quando muito lento
+    const rois = verySlow
+      ? [{ x: baseX, y: baseY }]
+      : slow
+      ? [
+          { x: baseX, y: baseY },
+          { x: baseX, y: Math.max(0, baseY - offsetY) },
+        ]
+      : [
+          { x: baseX, y: baseY },
+          { x: baseX, y: Math.max(0, baseY - offsetY) },
+          { x: baseX, y: Math.min(h - cropH, baseY + offsetY) },
+        ];
 
     try {
       let maybePlate: string | null = null;
       let gotConfidence = 0;
 
+      const t0 = performance.now();
       for (const roi of rois) {
-        // Recorta ROI com escala para aumentar DPI de OCR
-        const scale = 1.5;
-       const scale = slow ? 1.3 : 1.5; // ajuste dinâmico de escala
-       const t0 = performance.now();
-       for (const roi of rois) {
-       // Recorta ROI com escala para aumentar DPI de OCR
-+       const scale = slow ? 1.3 : 1.5; // ajuste dinâmico de escala
-+       const t0 = performance.now();
-+       for (const roi of rois) {
-+         // Recorta ROI com escala para aumentar DPI de OCR
-           const off = document.createElement('canvas');
-           off.width = Math.floor(cropW * scale);
-           off.height = Math.floor(cropH * scale);
-           const octx = off.getContext('2d');
-           if (!octx) continue;
-           octx.imageSmoothingEnabled = true;
-           octx.drawImage(canvas, roi.x, roi.y, cropW, cropH, 0, 0, off.width, off.height);
+        const scale = verySlow ? 1.1 : slow ? 1.2 : 1.5; // ajuste dinâmico de escala
+        const off = document.createElement('canvas');
+        off.width = Math.floor(cropW * scale);
+        off.height = Math.floor(cropH * scale);
+        const octx = off.getContext('2d');
+        if (!octx) continue;
+        octx.imageSmoothingEnabled = true;
+        octx.drawImage(canvas, roi.x, roi.y, cropW, cropH, 0, 0, off.width, off.height);
  
            const proc = preprocessCanvas(off);
  
@@ -135,18 +114,12 @@ export default function CameraScreen({ onBack }: { onBack: () => void }) {
              gotConfidence = conf;
              break;
            }
--        }
--       const dt = performance.now() - t0;
--       // atualiza média móvel e ajusta intervalo alvo
--       avgOcrMsRef.current = 0.7 * avgOcrMsRef.current + 0.3 * dt;
--       ocrIntervalMsRef.current = Math.max(200, Math.min(600, avgOcrMsRef.current * 0.8));
--      }
-+       }
-+       const dt = performance.now() - t0;
-+       // atualiza média móvel e ajusta intervalo alvo
-+       avgOcrMsRef.current = 0.7 * avgOcrMsRef.current + 0.3 * dt;
-+       ocrIntervalMsRef.current = Math.max(200, Math.min(600, avgOcrMsRef.current * 0.8));
-      }
+
+        }
+        const dt = performance.now() - t0;
+        // atualiza média móvel e ajusta intervalo alvo
+        avgOcrMsRef.current = 0.7 * avgOcrMsRef.current + 0.3 * dt;
+        ocrIntervalMsRef.current = Math.max(150, Math.min(500, avgOcrMsRef.current * 0.7));
 
       if (maybePlate) {
         const now = Date.now();
@@ -185,6 +158,7 @@ export default function CameraScreen({ onBack }: { onBack: () => void }) {
 
   useEffect(() => {
     let stream: MediaStream;
+    let animId = 0;
     async function startCamera() {
       try {
         stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false });
@@ -229,7 +203,6 @@ export default function CameraScreen({ onBack }: { onBack: () => void }) {
     };
     animId = requestAnimationFrame(tick);
     return () => {
-    clearInterval(id);
     cancelAnimationFrame(animId);
       if (stream) stream.getTracks().forEach((t) => t.stop());
       const w = workerRef.current;
