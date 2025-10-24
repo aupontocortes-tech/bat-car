@@ -55,6 +55,9 @@ export default function CameraScreen({ onBack }: { onBack: () => void }) {
           triggerVibrate();
           showCheck();
           refreshCount();
+          // Auto-exportar Excel imediatamente após registrar nova placa
+          const records = await getAllPlates();
+          downloadExcel(records);
         }
       }
     } catch (err) {
