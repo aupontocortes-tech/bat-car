@@ -108,7 +108,8 @@ export default function CameraScreen({ onBack }: { onBack: () => void }) {
  
            const raw = normalizeText(data.text || '');
            const candidate = extractPlate(raw);
-           const conf = (data.confidence as number) || 0;
+-          const conf = (data.confidence as number) || 0;
++          const conf = typeof (data as any).confidence === 'number' ? (data as any).confidence : 80;
            if (candidate) {
              maybePlate = candidate;
              gotConfidence = conf;
@@ -127,11 +128,14 @@ export default function CameraScreen({ onBack }: { onBack: () => void }) {
         recentDetectionsRef.current = recentDetectionsRef.current
           .filter((d) => now - d.ts <= confirmWindowMs)
           .concat({ plate: maybePlate, confidence: gotConfidence, ts: now });
-        const repeats = recentDetectionsRef.current.filter((d) => d.plate === maybePlate && d.confidence >= minConfidence).length;
-
+        -        const repeats = recentDetectionsRef.current.filter((d) => d.plate === maybePlate && (d.confidence === undefined || d.confidence >= minConfidence)).length;
+        +        const repeats = recentDetectionsRef.current.filter((d) => d.plate === maybePlate && (d.confidence === undefined || d.confidence >= minConfidence)).length;
+        +        const shouldConfirm = repeats >= minRepeats || gotConfidence >= (minConfidence + 15);
+        
         if (lastPlateRef.current === maybePlate && now - lastSeenAtRef.current < cooldownMs) {
           showMessage('Placa já registrada');
-        } else if (repeats >= minRepeats) {
+        -        } else if (repeats >= minRepeats) {
+        +        } else if (shouldConfirm) {
           lastPlateRef.current = maybePlate;
           lastSeenAtRef.current = now;
           const added = await addPlateIfNew(maybePlate);
