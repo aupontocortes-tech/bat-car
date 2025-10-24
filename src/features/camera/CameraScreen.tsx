@@ -23,6 +23,11 @@ export default function CameraScreen({ onBack }: { onBack: () => void }) {
   // Worker Tesseract reutilizável para maior performance
   const workerRef = useRef<any>(null);
   const workerReadyRef = useRef<boolean>(false);
+
+  // Buffer de detecções recentes para confirmação multi-frame
+  const recentDetectionsRef = useRef<Array<{ plate: string; confidence: number; ts: number }>>([]);
+  const confirmWindowMs = 3000; // janela para confirmar mesma placa
+  const minRepeats = 2; // mínimo de aparições para confirmar
   const refreshCount = useCallback(async () => {
     setCount(await getCount());
   }, []);
@@ -98,26 +103,30 @@ export default function CameraScreen({ onBack }: { onBack: () => void }) {
 
       if (maybePlate) {
         const now = Date.now();
+        // Atualiza buffer e verifica repetição
+        recentDetectionsRef.current = recentDetectionsRef.current
+          .filter((d) => now - d.ts <= confirmWindowMs)
+          .concat({ plate: maybePlate, confidence: gotConfidence, ts: now });
+        const repeats = recentDetectionsRef.current.filter((d) => d.plate === maybePlate && d.confidence >= minConfidence).length;
+
         if (lastPlateRef.current === maybePlate && now - lastSeenAtRef.current < cooldownMs) {
           showMessage('Placa já registrada');
-        } else {
+        } else if (repeats >= minRepeats) {
           lastPlateRef.current = maybePlate;
           lastSeenAtRef.current = now;
-          if (gotConfidence >= minConfidence) {
-            const added = await addPlateIfNew(maybePlate);
-            if (added) {
-              triggerBeep();
-              triggerVibrate();
-              showMessage('Nova placa registrada!');
-              refreshCount();
-              const records = await getAllPlates();
-              downloadExcel(records);
-            } else {
-              showMessage('Placa já registrada');
-            }
+          const added = await addPlateIfNew(maybePlate);
+          if (added) {
+            triggerBeep();
+            triggerVibrate();
+            showMessage('Nova placa registrada!');
+            refreshCount();
+            const records = await getAllPlates();
+            downloadExcel(records);
           } else {
-            // confiança baixa: ignora para evitar falsos positivos
+            showMessage('Placa já registrada');
           }
+        } else {
+          // Ainda não confirmou em múltiplos frames
         }
       }
     } catch (err) {
