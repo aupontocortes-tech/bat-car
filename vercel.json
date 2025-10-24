@@ -4,8 +4,8 @@
       "src": "bat-app/package.json",
       "use": "@vercel/static-build",
       "config": {
-        "buildCommand": "cd bat-app && npm run build",
-        "distDir": "bat-app/build"
+        "buildCommand": "npm run build",
+        "outputDirectory": "bat-app/build"
       }
     }
   ],
