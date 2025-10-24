@@ -4,11 +4,11 @@
       "src": "bat-app/package.json",
       "use": "@vercel/static-build",
       "config": {
-        "buildCommand": "npm run build"
+        "buildCommand": "npm run build",
+        "distDir": "bat-app/build"
       }
     }
   ],
-  "outputDirectory": "bat-app/build",
   "rewrites": [
     { "source": "/(.*)", "destination": "/index.html" }
   ],
