@@ -2,52 +2,78 @@ import React from 'react';
 
 export default function AppLogo({ className, ...props }: React.SVGProps<SVGSVGElement>) {
   return (
-    <svg viewBox="0 0 640 640" role="img" aria-label="Bat App logo" className={className} {...props}>
+    <svg
+      viewBox="0 0 500 500"
+      role="img"
+      aria-label="BAT APP logo"
+      className={className}
+      {...props}
+    >
       <defs>
-        <linearGradient id="blueGrad" x1="0" x2="1" y1="0" y2="0">
-          <stop offset="0%" stopColor="#6EC5FF" />
-          <stop offset="100%" stopColor="#1E6FDB" />
+        <linearGradient id="bgGrad" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="#0D2147" />
+          <stop offset="100%" stopColor="#0B1530" />
         </linearGradient>
-        <linearGradient id="ringGrad" x1="0" x2="0" y1="0" y2="1">
-          <stop offset="0%" stopColor="#1B66C9" />
-          <stop offset="100%" stopColor="#0D47A1" />
+        <linearGradient id="ringGrad" x1="0" y1="0" x2="1" y2="0">
+          <stop offset="0%" stopColor="#8FD7FF" />
+          <stop offset="100%" stopColor="#5FA8FF" />
+        </linearGradient>
+        <linearGradient id="bannerGrad" x1="0" y1="0" x2="1" y2="0">
+          <stop offset="0%" stopColor="#8BD8FF" />
+          <stop offset="50%" stopColor="#2A7FEA" />
+          <stop offset="100%" stopColor="#8BD8FF" />
         </linearGradient>
         <filter id="shadow" x="-30%" y="-30%" width="160%" height="160%">
-          <feDropShadow dx="0" dy="10" stdDeviation="8" floodColor="#001428" floodOpacity="0.45" />
-        </filter>
-        <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
-          <feGaussianBlur stdDeviation="4" result="blur" />
-          <feMerge>
-            <feMergeNode in="blur" />
-            <feMergeNode in="SourceGraphic" />
-          </feMerge>
+          <feDropShadow dx="0" dy="6" stdDeviation="8" floodColor="#001428" floodOpacity="0.35" />
         </filter>
       </defs>
 
-      {/* Base transparente */}
-      <rect x="0" y="0" width="640" height="640" fill="none" />
+      {/* dark background circle to echo the reference */}
+      <circle cx="250" cy="250" r="240" fill="url(#bgGrad)" />
 
-      {/* Emblema em anéis */}
+      {/* double rings */}
       <g filter="url(#shadow)">
-        <circle cx="320" cy="320" r="260" fill="none" stroke="#FFFFFF" strokeWidth="20" />
-        <circle cx="320" cy="320" r="220" fill="none" stroke="url(#ringGrad)" strokeWidth="14" />
-
-        {/* Formas estilizadas (bat-like) */}
-        <g filter="url(#glow)">
-          <path d="M160 280 Q320 160 480 280" fill="url(#blueGrad)" opacity="0.9" />
-          <path d="M180 340 Q320 240 460 340" fill="#1E6FDB" opacity="0.9" />
-          <circle cx="250" cy="320" r="24" fill="#FFFFFF" opacity="0.85" />
-          <circle cx="390" cy="320" r="24" fill="#FFFFFF" opacity="0.85" />
-        </g>
-
-        {/* Título */}
-        <text x="320" y="452" textAnchor="middle" fontFamily="Montserrat, system-ui, -apple-system, Segoe UI, Roboto, Arial" fontSize="64" fontWeight="800" fill="#FFFFFF">BAT APP</text>
+        <circle cx="250" cy="250" r="190" fill="none" stroke="#FFFFFF" strokeWidth="10" opacity="0.9" />
+        <circle cx="250" cy="250" r="170" fill="none" stroke="url(#ringGrad)" strokeWidth="8" opacity="0.9" />
       </g>
 
-      {/* Linha inferior decorativa (sutil) */}
-      <g>
-        <path d="M210 500 Q320 540 430 500" stroke="#1E6FDB" strokeWidth="6" strokeLinecap="round" fill="none" opacity="0.6" />
+      {/* car silhouette (simple geometric strokes) */}
+      <g stroke="#FFFFFF" strokeWidth="8" fill="none" opacity="0.95">
+        {/* roof and windows */}
+        <path d="M150 220 L200 200 L290 200 L330 230" strokeLinecap="round" />
+        <path d="M200 200 L220 220 L270 220 L290 200" strokeLinecap="round" />
+        {/* body */}
+        <path d="M120 260 L150 240 L340 240 L380 260 L380 270 L110 270 Z" strokeLinecap="round" />
+        {/* details */}
+        <path d="M180 240 L210 240" />
+        <path d="M240 240 L310 240" />
+        {/* wheels */}
+        <circle cx="170" cy="270" r="22" />
+        <circle cx="320" cy="270" r="22" />
       </g>
+
+      {/* sparkles */}
+      <g fill="#FFFFFF" opacity="0.9">
+        <path d="M120 200 L125 210 L115 210 Z" />
+        <path d="M360 200 L365 210 L355 210 Z" />
+      </g>
+
+      {/* angled banner with title */}
+      <g transform="translate(90,280) skewX(-15)">
+        <rect x="0" y="0" width="320" height="60" rx="8" fill="url(#bannerGrad)" />
+        <text
+          x="160"
+          y="40"
+          textAnchor="middle"
+          fontFamily="Montserrat, system-ui, -apple-system, Segoe UI, Roboto, Arial"
+          fontSize="42"
+          fontWeight="800"
+          fill="#FFFFFF"
+        >
+          BAT-APP
+        </text>
+      </g>
+
     </svg>
   );
 }
