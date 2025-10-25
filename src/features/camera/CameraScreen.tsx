@@ -48,6 +48,12 @@ export default function CameraScreen({ onBack }: { onBack: () => void }) {
       if (saved !== null) setAutoExport(saved === 'true');
     } catch {}
   }, []);
+  // Modo diagnóstico: mostrar ROI e últimos dados de OCR
+  const [debug, setDebug] = useState<boolean>(false);
+  const [roiRect, setRoiRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
+  const [lastOcr, setLastOcr] = useState<{ text: string; confidence: number } | null>(null);
+  const [fullFrame, setFullFrame] = useState<boolean>(false);
+  const fullFrameRef = useRef<boolean>(false);
 
   const refreshCount = useCallback(async () => {
     setCount(await getCount());
@@ -69,17 +75,24 @@ export default function CameraScreen({ onBack }: { onBack: () => void }) {
     canvas.height = h;
 
     // ROI central: faixa onde a placa costuma estar
-    const cropW = Math.floor(w * 0.8);
-    const cropH = Math.floor(h * 0.22);
-    const baseX = Math.floor((w - cropW) / 2);
+    let cropW = Math.floor(w * 0.8);
+    let cropH = Math.floor(h * 0.22);
+    let baseX = Math.floor((w - cropW) / 2);
     // Alterna banda (topo/meio/base) se ficar >2s sem sucesso
-    if (Date.now() - lastSuccessAtRef.current > 2000) {
+    if (!fullFrameRef.current && Date.now() - lastSuccessAtRef.current > 2000) {
       roiBandRef.current = (roiBandRef.current + 1) % 3;
     }
     const middleY = Math.floor((h - cropH) / 2);
     const topY = Math.max(0, Math.floor(h * 0.18));
     const bottomY = Math.min(h - cropH, Math.floor(h * 0.62));
-    const baseY = roiBandRef.current === 0 ? topY : roiBandRef.current === 2 ? bottomY : middleY;
+    let baseY = roiBandRef.current === 0 ? topY : roiBandRef.current === 2 ? bottomY : middleY;
+
+    if (fullFrameRef.current) {
+      cropW = w; cropH = h; baseX = 0; baseY = 0;
+    }
+
+    // Atualiza ROI para overlay/diagnóstico
+    setRoiRect({ x: baseX, y: baseY, w: cropW, h: cropH });
 
     ctx.drawImage(video, 0, 0, w, h);
 
@@ -115,6 +128,8 @@ export default function CameraScreen({ onBack }: { onBack: () => void }) {
         const raw = normalizeText(data.text || '');
         const candidate = extractPlate(raw);
         const conf = typeof (data as any).confidence === 'number' ? (data as any).confidence : 80;
+        // Atualiza últimos dados de OCR para diagnóstico
+        setLastOcr({ text: data.text || '', confidence: conf });
         if (candidate) {
           maybePlate = candidate;
           gotConfidence = conf;
