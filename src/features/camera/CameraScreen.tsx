@@ -206,13 +206,13 @@ export default function CameraScreen({ onBack }: { onBack: () => void }) {
           zoomRangeRef.current = { min: zoomCap.min ?? 1, max: zoomCap.max ?? 3, step: zoomCap.step ?? 0.1 };
           const initial = zoomCap.min ?? 1;
           setZoom(initial);
-          try { await track.applyConstraints({ advanced: [{ zoom: initial }] }); } catch {}
+          try { await track.applyConstraints({ advanced: [{ zoom: initial } as any] }); } catch {}
         } else if (typeof zoomCap === 'number') {
           setZoomSupported(true);
           zoomRangeRef.current = { min: 1, max: zoomCap, step: 0.1 };
           const initial = 1;
           setZoom(initial);
-          try { await track.applyConstraints({ advanced: [{ zoom: initial }] }); } catch {}
+          try { await track.applyConstraints({ advanced: [{ zoom: initial } as any] }); } catch {}
         }
       } catch (err) {
         console.error('Erro ao acessar câmera', err);
