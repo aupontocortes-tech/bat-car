@@ -19,7 +19,7 @@ export default function CameraScreen({ onBack }: { onBack: () => void }) {
   const lastSeenAtRef = useRef<number>(0);
   const lastDetectedRef = useRef<{ plate: string; confidence: number; ts: number } | null>(null);
   const cooldownMs = 4000; // evita repetição consecutiva em janelas curtas
-  const minConfidence = 60; // confiança mínima para considerar leitura válida
+  const minConfidence = 55; // confiança mínima para considerar leitura válida
   const confirmWindowMs = 2000; // janela (reduzida) apenas para reforço, não obrigatório
 
   // Worker Tesseract reutilizável para maior performance
@@ -120,7 +120,11 @@ export default function CameraScreen({ onBack }: { onBack: () => void }) {
         } else {
           const result = await Tesseract.recognize(proc, 'eng', {
             tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789',
+            preserve_interword_spaces: '1',
+            user_defined_dpi: '300',
             psm: 7,
+            load_system_dawg: 0,
+            load_freq_dawg: 0,
           } as any);
           data = result.data;
         }
@@ -144,12 +148,12 @@ export default function CameraScreen({ onBack }: { onBack: () => void }) {
         const now = Date.now();
         const prev = lastDetectedRef.current;
         const currentValid = gotConfidence >= minConfidence;
-        const consecutiveTwo = !!prev && prev.plate === maybePlate && (now - prev.ts <= confirmWindowMs) && currentValid && prev.confidence >= minConfidence;
+        const consecutiveTwo = !!prev && prev.plate === maybePlate && (now - prev.ts <= confirmWindowMs) && prev.confidence >= 45 && gotConfidence >= 45;
 
         if (lastPlateRef.current === maybePlate && now - lastSeenAtRef.current < cooldownMs) {
           showMessage('Placa já registrada');
-        } else if (currentValid) {
-          // confirma em 1 frame com confiança e salva em paralelo
+        } else if (currentValid || consecutiveTwo) {
+          // confirma em 1 frame com confiança ou 2 frames consecutivos moderados
           lastPlateRef.current = maybePlate;
           lastSeenAtRef.current = now;
           lastSuccessAtRef.current = now;
@@ -502,6 +506,31 @@ function preprocessCanvas(src: HTMLCanvasElement): HTMLCanvasElement {
     const val = d[i] > threshold ? 255 : 0;
     d[i] = d[i + 1] = d[i + 2] = val;
     d[i + 3] = 255;
+  }
+
+  // Sharpen leve (unsharp mask)
+  const blur = new Uint8ClampedArray(d.length);
+  const kernel = [1/9,1/9,1/9,1/9,1/9,1/9,1/9,1/9,1/9];
+  const get = (x:number,y:number)=>{
+    const xi = Math.max(0, Math.min(w-1, x));
+    const yi = Math.max(0, Math.min(h-1, y));
+    const idx = (yi*w+xi)*4; return d[idx];
+  };
+  for (let y=0;y<h;y++){
+    for (let x=0;x<w;x++){
+      let acc=0; let k=0;
+      for (let ky=-1;ky<=1;ky++){
+        for (let kx=-1;kx<=1;kx++){
+          acc += get(x+kx,y+ky)*kernel[k++];
+        }
+      }
+      const idx=(y*w+x)*4; const orig=d[idx];
+      const val = Math.max(0, Math.min(255, Math.round(orig + 0.6*(orig - acc))));
+      blur[idx]=blur[idx+1]=blur[idx+2]=val; blur[idx+3]=255;
+    }
+  }
+  for (let i=0;i<d.length;i+=4){
+    d[i]=blur[i]; d[i+1]=blur[i+1]; d[i+2]=blur[i+2]; d[i+3]=255;
   }
 
   ctx.putImageData(imageData, 0, 0);
