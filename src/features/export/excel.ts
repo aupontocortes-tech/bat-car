@@ -1,8 +1,9 @@
 import * as XLSX from 'xlsx';
 import type { PlateRecord } from '../../utils/plate';
 
-export function buildWorkbook(records: PlateRecord[]) {
-  const rows = records.map((r) => ({ Placa: r.plate, 'Data e hora': new Date(r.timestamp).toLocaleString() }));
+function buildWorkbook(records: PlateRecord[]) {
+  const arr = Array.isArray(records) ? records : [];
+  const rows = arr.map((r) => ({ Placa: r.plate, 'Data e hora': new Date(r.timestamp).toLocaleString() }));
   const ws = XLSX.utils.json_to_sheet(rows);
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Placas');

@@ -1,5 +1,6 @@
 import type { Metadata } from 'next'
 import './globals.css'
+import SwCleanup from '../components/SwCleanup'
 
 export const metadata: Metadata = {
   // Usa env em produção; fallback para localhost em dev
@@ -11,7 +12,10 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="pt-br">
-      <body>{children}</body>
+      <body>
+        <SwCleanup />
+        {children}
+      </body>
     </html>
   )
 }

@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useRef, useState, useCallback } from 'react';
 import Tesseract from 'tesseract.js';
-import { extractPlates, normalizeText, type PlateRecord } from '../../utils/plate';
+import { extractPlates, normalizeText, isMercosulPlate, type PlateRecord } from '../../utils/plate';
 import { addPlateIfNew, getAllPlates, clearPlates, getCount } from '../storage/storage';
 import { downloadExcel, makeExcelBlob } from '../export/excel';
 
@@ -12,7 +12,7 @@ export default function CameraScreen({ onBack }: { onBack: () => void }) {
   const [count, setCount] = useState<number>(0);
   const [showSaved, setShowSaved] = useState(false);
   const [savedRecords, setSavedRecords] = useState<PlateRecord[]>([]);
-
+  const [lastEvent, setLastEvent] = useState<string | null>(null);
   // Controle de processamento e dedupe temporal
   const processingRef = useRef(false);
   const lastPlateRef = useRef<string | null>(null);
@@ -149,17 +149,19 @@ export default function CameraScreen({ onBack }: { onBack: () => void }) {
         const prev = lastDetectedRef.current;
         const currentValid = gotConfidence >= minConfidence;
         const consecutiveTwo = !!prev && prev.plate === maybePlate && (now - prev.ts <= confirmWindowMs) && prev.confidence >= 45 && gotConfidence >= 45;
+        const isMerc = isMercosulPlate(maybePlate!);
 
         if (lastPlateRef.current === maybePlate && now - lastSeenAtRef.current < cooldownMs) {
           showMessage('Placa já registrada');
-        } else if (currentValid || consecutiveTwo) {
-          // confirma em 1 frame com confiança ou 2 frames consecutivos moderados
+        } else if (currentValid || consecutiveTwo || isMerc) {
+          // confirma em 1 frame com confiança, 2 frames moderados, ou padrão Mercosul detectado
           lastPlateRef.current = maybePlate;
           lastSeenAtRef.current = now;
           lastSuccessAtRef.current = now;
           roiBandRef.current = 1; // volta para banda central
           (async () => {
             const added = await addPlateIfNew(maybePlate!);
+            sendPlate(maybePlate!);
             if (added) {
               triggerBeep();
               triggerVibrate();
@@ -175,6 +177,8 @@ export default function CameraScreen({ onBack }: { onBack: () => void }) {
         } else {
           // guarda leitura atual para possível reforço no próximo frame
           lastDetectedRef.current = { plate: maybePlate, confidence: gotConfidence, ts: now };
+          // Emite evento mesmo quando não confirma por confiança, para leitura fluida
+          sendPlate(maybePlate);
         }
       } else {
         // sem leitura válida neste frame; não altera lastDetectedRef
@@ -196,8 +200,27 @@ export default function CameraScreen({ onBack }: { onBack: () => void }) {
           audio: false,
         });
         if (videoRef.current) {
-          videoRef.current.srcObject = stream as any;
-          await videoRef.current.play();
+          const v = videoRef.current;
+          // Evita reatribuir se já estiver com o mesmo stream
+          if (v.srcObject !== stream) v.srcObject = stream as any;
+          // Aguarda metadados antes de chamar play()
+          await new Promise<void>((resolve) => {
+            if (v.readyState >= 1) resolve();
+            else v.onloadedmetadata = () => resolve();
+          });
+          try {
+            await v.play();
+          } catch (e: any) {
+            // AbortError: uma nova requisição de load interrompeu play()
+            if (e?.name === 'AbortError') {
+              console.warn('play() abortada; tentando novamente...');
+              setTimeout(() => {
+                v.play().catch(() => {});
+              }, 50);
+            } else {
+              console.error('Falha ao iniciar reprodução do vídeo', e);
+            }
+          }
         }
         // Detecção de capacidades (torch/zoom)
         const track = stream.getVideoTracks()[0];
@@ -338,6 +361,15 @@ export default function CameraScreen({ onBack }: { onBack: () => void }) {
     setTimeout(() => setMessage(null), 1000);
   }
 
+  // moved inside component to access setLastEvent
+  // sendPlate foi movida para dentro do componente para acessar setLastEvent
+  function sendPlate(plate: string) {
+    setLastEvent(`${formatDateTime()} — ${plate}`);
+    try {
+      window.dispatchEvent(new CustomEvent('batapp:plate', { detail: { plate, at: Date.now() } }));
+    } catch {}
+  }
+
   async function setTorch(next: boolean) {
     const track = videoTrackRef.current;
     if (!track || !torchSupported) return;
@@ -427,11 +459,11 @@ export default function CameraScreen({ onBack }: { onBack: () => void }) {
               </button>
             </div>
             <div className="max-h-[50vh] overflow-y-auto">
-              {savedRecords.length === 0 ? (
+              {(Array.isArray(savedRecords) ? savedRecords.length === 0 : true) ? (
                 <div className="px-4 py-6 text-center text-sm text-black/60">Nenhum registro ainda</div>
               ) : (
                 <ul>
-                  {savedRecords.map((r) => (
+                  {(Array.isArray(savedRecords) ? savedRecords : []).map((r) => (
                     <li key={r.plate} className="px-4 py-3 border-b text-sm flex items-center justify-between">
                       <span className="font-mono font-semibold">{r.plate}</span>
                       <span className="text-black/60">{new Date(r.timestamp).toLocaleString()}</span>
@@ -535,4 +567,10 @@ function preprocessCanvas(src: HTMLCanvasElement): HTMLCanvasElement {
 
   ctx.putImageData(imageData, 0, 0);
   return out;
+}
+
+
+function formatDateTime(d = new Date()): string {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 }

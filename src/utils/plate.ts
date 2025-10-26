@@ -6,6 +6,10 @@ const regexes = [
   /^[A-Z]{3}[0-9][A-Z][0-9]{2}$/,
 ];
 
+export function isMercosulPlate(plate: string): boolean {
+  return /^[A-Z]{3}[0-9][A-Z][0-9]{2}$/.test(plate);
+}
+
 export function normalizeText(input: string): string {
   return input
     .toUpperCase()
