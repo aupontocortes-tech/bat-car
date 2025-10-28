@@ -2,10 +2,16 @@ import * as XLSX from 'xlsx';
 import type { PlateRecord } from '../../utils/plate';
 
 function buildWorkbook(records: PlateRecord[]) {
-  const arr = Array.isArray(records) ? records : [];
-  const rows = arr.map((r) => ({ Placa: r.plate, 'Data e hora': new Date(r.timestamp).toLocaleString() }));
-  const ws = XLSX.utils.json_to_sheet(rows);
+  const arr = Array.isArray(records) ? records.filter(Boolean) : [];
   const wb = XLSX.utils.book_new();
+  let ws: XLSX.WorkSheet;
+  if (arr.length > 0) {
+    const rows = arr.map((r) => ({ Placa: r.plate, 'Data e hora': new Date(r.timestamp).toLocaleString() }));
+    ws = XLSX.utils.json_to_sheet(rows);
+  } else {
+    // Fallback robusto: cria planilha com cabeçalho vazio para evitar paths internos que assumem arrays
+    ws = XLSX.utils.aoa_to_sheet([[ 'Placa', 'Data e hora' ]]);
+  }
   XLSX.utils.book_append_sheet(wb, ws, 'Placas');
   return wb;
 }

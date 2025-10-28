@@ -1,6 +1,7 @@
 import type { Metadata } from 'next'
 import './globals.css'
 import SwCleanup from '../components/SwCleanup'
+import ErrorOverlay from '../components/ErrorOverlay'
 
 export const metadata: Metadata = {
   // Usa env em produção; fallback para localhost em dev
@@ -14,6 +15,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="pt-br">
       <body>
         <SwCleanup />
+        <ErrorOverlay />
         {children}
       </body>
     </html>

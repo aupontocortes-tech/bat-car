@@ -1,19 +1,23 @@
 export type PlateRecord = { plate: string; timestamp: number };
 
-// BR older: AAA0000; Mercosul: AAA0A00
-const regexes = [
-  /^[A-Z]{3}[0-9]{4}$/,
-  /^[A-Z]{3}[0-9][A-Z][0-9]{2}$/,
-];
+// BR plate formats
+export const regexes = {
+  old: /^[A-Z]{3}[0-9]{4}$/,
+  merc: /^[A-Z]{3}[0-9][A-Z][0-9]{2}$/,
+};
 
 export function isMercosulPlate(plate: string): boolean {
-  return /^[A-Z]{3}[0-9][A-Z][0-9]{2}$/.test(plate);
+  return regexes.merc.test(plate);
+}
+
+export function isValidPlate(plate: string): boolean {
+  return regexes.merc.test(plate) || regexes.old.test(plate);
 }
 
 export function normalizeText(input: string): string {
   return input
     .toUpperCase()
-    .replace(/[^A-Z0-9]/g, '') // keep alphanumerics only
+    .replace(/[^A-Z0-9]/g, '')
     .trim();
 }
 
@@ -25,14 +29,12 @@ function fixConfusions(sub: string): string {
   for (let i = 0; i < 7; i++) {
     const c = chars[i];
     if (isLetterPos(i)) {
-      // map digits that look like letters
       if (c === '0') chars[i] = 'O';
       else if (c === '1') chars[i] = 'I';
       else if (c === '2') chars[i] = 'Z';
       else if (c === '5') chars[i] = 'S';
       else if (c === '8') chars[i] = 'B';
     } else if (isDigitPos(i)) {
-      // map letters that look like digits
       if (c === 'O' || c === 'Q') chars[i] = '0';
       else if (c === 'I' || c === 'L') chars[i] = '1';
       else if (c === 'Z') chars[i] = '2';
@@ -45,17 +47,53 @@ function fixConfusions(sub: string): string {
 }
 
 export function extractPlates(text: string): string[] {
-  const raw = normalizeText(text);
-  const candidates: string[] = [];
-  // generate substrings of plausible plate length (7)
-  for (let i = 0; i <= raw.length - 7; i++) {
-    const sub = raw.slice(i, i + 7);
-    if (regexes.some((r) => r.test(sub))) {
-      candidates.push(sub);
-    } else {
-      const fixed = fixConfusions(sub);
-      if (regexes.some((r) => r.test(fixed))) candidates.push(fixed);
+  const cleaned = normalizeText(text);
+  const found: string[] = [];
+  const pushUnique = (p: string) => {
+    if (isValidPlate(p) && !found.includes(p)) found.push(p);
+  };
+  for (let i = 0; i < cleaned.length; i++) {
+    for (let len = 6; len <= 8; len++) {
+      const sub = cleaned.slice(i, i + len);
+      if (sub.length < 6) continue;
+      if (isValidPlate(sub)) pushUnique(sub);
+      const fixed1 = fixConfusions(sub);
+      if (fixed1 !== sub && isValidPlate(fixed1)) pushUnique(fixed1);
+      const tight = sub.replace(/[^A-Z0-9]/g, '');
+      if (tight.length >= 6 && isValidPlate(tight)) pushUnique(tight);
+      const fixed2 = fixConfusions(tight);
+      if (fixed2 !== tight && isValidPlate(fixed2)) pushUnique(fixed2);
     }
   }
-  return Array.from(new Set(candidates));
+  return found;
+}
+
+// Strict version: limits heuristic changes to avoid fabricated plates
+export function extractPlatesStrict(text: string, maxCorrections = 1): string[] {
+  const cleaned = normalizeText(text);
+  const found: Set<string> = new Set();
+  const pushIfValid = (candidate: string) => {
+    if (isValidPlate(candidate)) found.add(candidate);
+  };
+  const countDiffs = (a: string, b: string) => {
+    let diff = 0;
+    const n = Math.min(a.length, b.length);
+    for (let i = 0; i < n; i++) if (a[i] !== b[i]) diff++;
+    diff += Math.abs(a.length - b.length);
+    return diff;
+  };
+  for (let i = 0; i < cleaned.length; i++) {
+    for (let len = 6; len <= 8; len++) {
+      const sub = cleaned.slice(i, i + len);
+      if (sub.length < 6) continue;
+      const tight = sub.replace(/[^A-Z0-9]/g, '');
+      if (tight.length < 6) continue;
+      if (isValidPlate(tight)) pushIfValid(tight);
+      const fixed = fixConfusions(tight);
+      if (fixed !== tight && countDiffs(tight, fixed) <= maxCorrections) {
+        if (isValidPlate(fixed)) pushIfValid(fixed);
+      }
+    }
+  }
+  return Array.from(found);
 }
